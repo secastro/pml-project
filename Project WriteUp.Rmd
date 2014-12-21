@@ -1,0 +1,107 @@
+---
+title: 'Practical Machine Learning: Human Activity Recognition'
+author: "Sebastian Castro"
+date: "20 December 2014"
+output:
+  html_document:
+    keep_md: yes
+---
+
+## Introduction
+
+The availability of small devices built with sensors like accelerometers has created a whole movement of enthusiasts that use the data to understand and learn about human activity. Also it has opened up a new line of research, with the collection of large quantities of data and the use of machine learning algorithms to map raw data to activity.
+
+This reports benefits from the work done by a research group from Departamento de Informática at the Pontifical Catholic University of Rio de Janeiro, that designed and executed an experiment were subjects wore sensors while executing a set of controlled weight lifting exercises, some of them well executed and the rest including some typical mistakes. With the data and a set of machine learning algorithms, they recognized the mistakes based on the collected data. 
+
+For more information, check the details at their [site](http://groupware.les.inf.puc-rio.br/har)
+
+## Objective
+This work aims to use the weight lifting dataset prepared by the Brazilian team to train a model and produce prediction for 20 experiment. Each experiment contains several variables collected during the execution, and a value from 'A' to 'E' identifying the type of experiment. Our model will need to learn from the variables and produce a correct classification.
+
+## Data exploration and cleanup
+
+First, the data is loaded and some exploration is attempted. Because there are 160 variables for each experiment, using *pairs* to plot won't create something meaningful.
+
+```{r load_and_cleanup}
+set.seed(50127)
+if (!file.exists("pml-training.csv")) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml-training.csv", method="curl")
+}
+raw_train_data <- read.csv("pml-training.csv", header=TRUE)
+nrow(raw_train_data)
+ncol(raw_train_data)
+message("Summary of some of the variables")
+summary(raw_train_data[, c("X", "user_name", "min_yaw_forearm", "amplitude_roll_forearm", "roll_belt", "pitch_belt")])
+```
+
+Upon visual exploration using _summary_ (not included due to length), the original training data contains three major groups of columns: those that are useless to the model, like *X* and *user_name*, those with majority of NULL or NAs values, like *min_yaw_forearm* and *amplitude_roll_forearm* and the rest, which are preserved for the model.
+
+```{r cleaning_data}
+ clean_train_data <- raw_train_data[ , c("roll_belt", "pitch_belt", "yaw_belt", "total_accel_belt", "gyros_belt_x", "gyros_belt_y", "gyros_belt_z", "accel_belt_x", "accel_belt_y", "accel_belt_z", "magnet_belt_x", "magnet_belt_y", "magnet_belt_z", "roll_arm", "pitch_arm", "yaw_arm", "total_accel_arm", "gyros_arm_x", "gyros_arm_y", "gyros_arm_z", "accel_arm_x", "accel_arm_y", "accel_arm_z", "magnet_arm_x", "magnet_arm_y", "magnet_arm_z", "roll_dumbbell", "pitch_dumbbell", "yaw_dumbbell", "total_accel_dumbbell", "gyros_dumbbell_x", "gyros_dumbbell_y", "gyros_dumbbell_z", "accel_dumbbell_x", "accel_dumbbell_y", "accel_dumbbell_z", "magnet_dumbbell_x", "magnet_dumbbell_y", "magnet_dumbbell_z", "roll_forearm", "pitch_forearm", "yaw_forearm", "total_accel_forearm", "gyros_forearm_x", "gyros_forearm_y", "gyros_forearm_z", "accel_forearm_x", "accel_forearm_y", "accel_forearm_z", "magnet_forearm_x", "magnet_forearm_y", "magnet_forearm_z", "classe" )]
+```
+
+## Model training
+
+We will use Random Forests as training algorithm, therefore a train and a test set is not needed, because the error is estimated internally while the different trees are prepared, and cross validation handled internally as well.
+
+We work with two cross-validation method with Random Forests: Out-of-bag, specific for the algorithm, and Cross-Validation with the default parameters.
+
+```{r, echo=TRUE, cache=TRUE}
+library(caret)
+library(doMC)
+registerDoMC(cores = 4)
+Tcontrol1 <- trainControl(method="oob", allowParallel=TRUE )
+Tcontrol2 <- trainControl(method="cv", allowParallel=TRUE )
+model1 <- train(classe ~ ., data = clean_train_data, method = "rf", trControl=Tcontrol1)
+model2 <- train(classe ~ ., data = clean_train_data, method = "rf", trControl=Tcontrol2)
+```
+
+Once prepared the models, we check the results
+```{r review_model1, cache=TRUE}
+model1
+model2
+m1 <- confusionMatrix(clean_train_data$classe, predict(model1, clean_train_data))
+m2 <- confusionMatrix(clean_train_data$classe, predict(model2, clean_train_data))
+```
+
+Model 1 reports an accuracy of `r m1$overall[1]*100`% and Model 2 an accuracy of `r m2$overall[1]*100`%. The expected out of sample error is defined as 1 - model accuracy, for the first model we have a `r (1-m1$overall[1])*100`% expected out of sample error, and for the second model is `r 100*(1-m2$overall[1])`%.
+
+Visually we can see the accuracy per class using a Normalized Confusion Matrix.
+```{r conf_matrix_model1}
+library(ggplot2)
+t <- table(clean_train_data$classe, predict(model1, clean_train_data))
+norm_conf_matrix <- as.data.frame(t/rowSums(t, 5))
+ggplot(norm_conf_matrix, aes(x=Var1, y=Var2, fill=Freq)) + geom_tile() + scale_fill_gradient2("", breaks=seq(from=0, to=1, by=.1), low="white", high="red", mid="orange", midpoint=0.5) + theme_bw() + labs(x="Actual Class", y="Predicted Class", title="Normalized Confusion Matrix (model1)") + geom_text(aes(label=Freq)) + guides(fill=guide_colorbar(barheight=16))
+```
+
+And repeat for Model 2.
+```{r conf_matrix_model2}
+t <- table(clean_train_data$classe, predict(model2, clean_train_data))
+norm_conf_matrix <- as.data.frame(t/rowSums(t, 5))
+ggplot(norm_conf_matrix, aes(x=Var1, y=Var2, fill=Freq)) + geom_tile() + scale_fill_gradient2("", breaks=seq(from=0, to=1, by=.1), low="white", high="red", mid="orange", midpoint=0.5) + theme_bw() + labs(x="Actual Class", y="Predicted Class", title="Normalized Confusion Matrix (model2)") + geom_text(aes(label=Freq)) + guides(fill=guide_colorbar(barheight=16))
+```
+
+## Prediction
+
+Finally we take the test data, and generate the corresponding predictions using both models.
+```{r testing}
+if (!file.exists("pml-testing.csv")) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv", method="curl")
+}
+test_data <- read.csv("pml-testing.csv", header=TRUE)
+predict(model1, test_data)
+predict(model2, test_data)
+```
+
+To finalize, we save the predictions into text files, so they can be submitted for grading. Given the high accuracy of both models, we use Model 1 to produce a prediction.
+```{r generate_predictions}
+answers = rep("A", 20)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+answers <- predict(model1, test_data)
+```
